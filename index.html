@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>アプリ一覧</title>
+<style>
+:root { --bg:#f3f4f6; --card:#fff; --fg:#1f2937; --muted:#6b7280; --line:#e2e5ea; --accent:#1d3557; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1c2027; --fg:#e5e7eb; --muted:#9aa3b0; --line:#2c323b; --accent:#8fb0e0; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif; line-height:1.6; }
+main { max-width:640px; margin:0 auto; padding:28px 16px 40px; }
+h1 { font-size:20px; margin:0 0 4px; }
+p.lead { color:var(--muted); font-size:13px; margin:0 0 20px; }
+a.card { display:block; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:12px; color:inherit; text-decoration:none; }
+a.card:active { opacity:.7; }
+a.card b { display:block; font-size:17px; color:var(--accent); }
+a.card span { font-size:13px; color:var(--muted); }
+footer { font-size:12px; color:var(--muted); margin-top:24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>アプリ一覧</h1>
+  <p class="lead">入力した内容はこの端末の中だけに残ります。どこにも送信されません。</p>
+  <a class="card" href="takehome/"><b>手取り試算通帳</b><span>給与・税・保険・不動産を並べた資産管理シミュレーター</span></a>
+  <a class="card" href="cashflow/"><b>商談用 収支シミュレーション</b><span>物件ごとの収支をA4 2枚にまとめる</span></a>
+  <a class="card" href="asset-value/"><b>資産価値ダッシュボード</b><span>地価・取引価格から見る地域の資産価値</span></a>
+  <footer>ホーム画面に追加すると、アプリのように開けます。</footer>
+</main>
+</body>
+</html>
