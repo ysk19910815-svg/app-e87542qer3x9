@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>アプリ一覧</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="アプリ一覧">
+<link rel="apple-touch-icon" href="/app-e87542qer3x9/icons/icon-180.png">
+<link rel="icon" href="/app-e87542qer3x9/icons/icon-192.png">
+<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("/app-e87542qer3x9/sw.js").catch(() => {}));</script>
+<link rel="manifest" href="manifest.webmanifest">
 <style>
 :root { --bg:#f3f4f6; --card:#fff; --fg:#1f2937; --muted:#6b7280; --line:#e2e5ea; --accent:#1d3557; color-scheme: light dark; }
 @media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1c2027; --fg:#e5e7eb; --muted:#9aa3b0; --line:#2c323b; --accent:#8fb0e0; } }
@@ -27,7 +34,13 @@ footer { font-size:12px; color:var(--muted); margin-top:24px; }
   <a class="card" href="takehome/"><b>手取り試算通帳</b><span>給与・税・保険・不動産を並べた資産管理シミュレーター</span></a>
   <a class="card" href="cashflow/"><b>商談用 収支シミュレーション</b><span>物件ごとの収支をA4 2枚にまとめる</span></a>
   <a class="card" href="asset-value/"><b>資産価値ダッシュボード</b><span>地価・取引価格から見る地域の資産価値</span></a>
-  <footer>ホーム画面に追加すると、アプリのように開けます。</footer>
+  <footer>
+    <b>ホーム画面に置く（1回だけ）</b><br>
+    iPhone・iPad：Safariで開き、共有ボタン →「ホーム画面に追加」<br>
+    Android：Chromeで開き、右上︙ →「ホーム画面に追加」<br>
+    パソコン：Chrome／Edgeのアドレスバー右のインストールボタン、またはブックマーク<br>
+    一度開いた画面は、電波がなくても開けます。中身は自動で最新になります。
+  </footer>
 </main>
 </body>
 </html>

@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="資産価値">
+<link rel="apple-touch-icon" href="/app-e87542qer3x9/icons/icon-180.png">
+<link rel="icon" href="/app-e87542qer3x9/icons/icon-192.png">
+<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("/app-e87542qer3x9/sw.js").catch(() => {}));</script>
+
 <title>資産価値ダッシュボード</title>
 <!--
   資産価値ダッシュボード 第1弾（お客様用ページ・京阪神）
@@ -553,30 +560,57 @@ const GROSS = {
 //   いまの低い水準から上がる（価格が下がる）側を広めにとる。家賃の変化：中立は府県の民営借家の築年による家賃の下がり方（統計）
 const FUTURE = {
   years: [5, 10, 15, 20],
+  gMax: 0.05, // 相場の動きの年率の上限・下限（当社の置き方）
+  gYears: 10, // 相場の動きを効かせる年数（それより先はそのまま）
   sc: [
-    { key: 'bull', name: '強気', dy: -0.005, dg: 0, note: '利回り −0.5ポイント、家賃は横ばい' },
-    { key: 'base', name: '中立', dy: 0, dg: null, note: '利回りは今の築年別の値のまま、家賃は築年による下がり方（統計）' },
-    { key: 'bear', name: '弱気', dy: 0.010, dg: null, note: '利回り ＋1.0ポイント（当社の置き方。大阪市の区分マンションの利回りが2023年ごろの水準に戻る程度の幅を、どの地域にも使っています）、家賃は中立と同じ' },
+    { key: 'bull', name: '強気' },
+    { key: 'base', name: '中立' },
+    { key: 'bear', name: '弱気' },
   ],
 };
 let futView = 'graph'; // 将来タブの見せ方（graph＝3本のグラフと表／table＝街の動きと評価〔地価のこれまで＋3つの前提のこれから、一言評価〕）
 let futAnchor = 'center', futInput = null; // 将来の試算の出発点（center＝試算の幅の中心／gross＝表面利回りの価格／input＝手入力・万円）
+// この街の地価の過去10年の年率（将来の「相場の動き」に使う）
+function landRate(D, muni) {
+  const pick = (LM) => LM && (LM.r && LM.r.y10 != null ? ['r', LM.r] : LM.c && LM.c.y10 != null ? ['c', LM.c] : null);
+  const p = pick(D.land.munis[muni]);
+  if (p) return { src: 'muni', use: p[0], y10: p[1].y10, raw: Math.pow(1 + p[1].y10, 0.1) - 1 };
+  const xs = Object.values(D.land.munis).map((m) => m.r && m.r.y10).filter((x) => x != null);
+  if (!xs.length) return { src: 'none', use: 'r', y10: 0, raw: 0 };
+  const y10 = xs.reduce((a, b) => a + b, 0) / xs.length;
+  return { src: 'pref', use: 'r', y10, n: xs.length, raw: Math.pow(1 + y10, 0.1) - 1 };
+}
 function futureValues(R, anchor) {
   const g = R.gross; if (!g) return null;
   const G = g.G || GROSS[R.D.code], slope = (R.D.rent && R.D.rent.ageSlope) || 0.01;
+  const lr = landRate(R.D, R.v ? R.v.muni : null), gc = Math.max(-FUTURE.gMax, Math.min(FUTURE.gMax, lr.raw));
+  const gs = [gc, gc / 2, 0].sort((a, b) => b - a); // 強気・中立・弱気
   const rows = [];
   for (let t = 0; t <= 20; t++) {
     const age = g.age + t, b = age < 10 ? 0 : age < 20 ? 1 : 2, y0 = grossYieldAt(G, age) / 100;
-    rows.push({ t, age, b, y0, sc: FUTURE.sc.map((c) => {
-      const gr = c.dg === null ? -slope : c.dg === 0 ? 0 : -slope + c.dg;
-      const rentM = g.rentM * Math.pow(1 + gr, t), y = y0 + (c.dy * Math.min(t, 10)) / 10; // 利回りの変化は10年かけて少しずつ（今は3本とも同じ）
-      return { rentM, y, gr, raw: (rentM * 12) / y };
+    const rentM = g.rentM * Math.pow(1 - slope, t);
+    rows.push({ t, age, b, y0, sc: gs.map((gm) => {
+      const mk = Math.pow(1 + gm, Math.min(t, FUTURE.gYears)), y = y0 / mk; // 相場の動きは利回りに効かせる（価格＝家賃×12÷利回り）
+      return { rentM, y, gr: -slope, gm, raw: (rentM * 12) / y };
     }) });
   }
   // 割合（今＝1）を出発点に掛ける
   const p0 = rows[0].sc[0].raw;
   for (const r of rows) for (const c of r.sc) { c.ratio = c.raw / p0; c.price = anchor.price * c.ratio; }
-  return { rows, slope, anchor };
+  return { rows, slope, anchor, land: lr, g: gc, gs };
+}
+// 3つの前提の中身の文（相場の動き）
+function futNote(F, D, muniName) {
+  const r = (x) => (x >= 0 ? '年+' : '年−') + fmt(Math.abs(x * 100), 1) + '%';
+  const what = (x) => x === 0 ? '相場は横ばい' : Math.abs(x - F.g) < 1e-12 ? `過去10年のペースが続く（${r(x)}）` : `過去10年の半分のペース（${r(x)}）`;
+  return FUTURE.sc.map((c, i) => `<b>${c.name}</b>＝${what(F.gs[i])}`).join('／');
+}
+function futLandSrc(F, D, muniName) {
+  const L = F.land, useName = L.use === 'c' ? '商業地' : '住宅地';
+  const capped = Math.abs(L.raw) > FUTURE.gMax ? `（実際は年${pct(L.raw)}ですが、当社の置き方で±${FUTURE.gMax * 100}%までにしています）` : '';
+  return L.src === 'muni' ? `${muniName}の公示地価（${useName}）の過去10年 ${pct(L.y10)}＝年${pct(F.g)}${capped}`
+    : L.src === 'pref' ? `${muniName}に過去10年の公示地価がないため、${D.name}内の市区町村（住宅地、${L.n}市区町村）の過去10年の平均 ${pct(L.y10)}＝年${pct(F.g)}${capped}`
+    : '公示地価の過去10年の値がないため、相場の動きは0';
 }
 // 築年 → 表面利回り（%）。帯の値を築5・15・30年に置いて直線でつなぐ
 const GROSS_AT = [5, 15, 30];
@@ -1093,7 +1127,8 @@ function rentStat(D, v) {
   const KY = wood ? R.kyoeiW : R.kyoei;
   const kyoei = (KY && (KY[ageKey] || KY[D.code + '000'])) || 1; // 共益費込みにそろえる比
   const towerK = v.tower && v.area >= TOWER_MIN_AREA && TOWER_K_PREFS.includes(D.code) ? TOWER_RENT_K : 1;
-  return { perM2: m.v, n: m.n, from, weak, ageKey, ageF, ageRow: row, kyoei, wood: !!wood, towerK, monthly: m.v * ageF * kyoei * v.area * towerK };
+  const knK = m.k || 1; // 一戸建て・木造の混ざりの補正（推計の戸数1,000以上の市区町村だけ）
+  return { perM2: m.v, n: m.n, from, weak, ageKey, ageF, ageRow: row, kyoei, wood: !!wood, towerK, knK, monthly: m.v * ageF * kyoei * v.area * towerK * knK };
 }
 // 戸建て：第122-5表の一戸建・木造（非木造）の借家の㎡家賃（借家300戸未満なら近くの市区町村→府県）× 築年の比（同じ構造の平均に対する比）× 延床面積
 function rentStatSt(D, v, key) {
@@ -1224,7 +1259,7 @@ function compute(D, v) {
     sale = { loan: loanYen, lo: r1(lo) - r1(SALE_FEE(lo)) - loanYen, hi: r1(hi) - r1(SALE_FEE(hi)) - loanYen, feeLo: SALE_FEE(lo), feeHi: SALE_FEE(hi) };
   }
   const gross = grossValue(D, v, v.rent > 0 ? v.rent : cmpRent, v.rent > 0 ? 'now' : comps ? 'comps' : 'stat');
-  const R0 = { gross, D };
+  const R0 = { gross, D, v };
   // 出発点：手入力が有効ならそれ、表面利回りを選んだらその価格、ほかは試算の幅の中心（なければ表面利回りの価格）
   const anc = v.futAnchor === 'input' && v.futInput > 0 ? { key: 'input', price: v.futInput * 10000 }
     : v.futAnchor === 'gross' || center == null ? { key: 'gross', price: gross ? gross.price : 0 }
@@ -1383,15 +1418,15 @@ function renderFuture(R) {
     <div class="ctrl-row fut-view"><span class="cn" style="margin-right:6px">見せ方</span><div class="seg" role="group" aria-label="将来の試算の見せ方"><button type="button" data-fv="graph" aria-pressed="${futView === 'graph'}">グラフで見る</button><button type="button" data-fv="table" aria-pressed="${futView === 'table'}">街の動きと評価</button></div></div>
     <div class="fv-graph">
     <div class="ctrl-row fut-anchor"><span class="cn" style="margin-right:6px">出発点</span><div class="seg" role="group" aria-label="将来の試算の出発点">${[['center', '今の試算の幅の中心'], ['gross', '表面利回りの価格'], ['input', '手入力']].map(([k, l]) => `<button type="button" data-anc="${k}" aria-pressed="${F.anchor.key === k}">${l}</button>`).join('')}</div>${futAnchor === 'input' ? `<div class="unit-wrap" style="max-width:180px;margin-left:8px"><input id="futInput" inputmode="numeric" placeholder="買取の提示額など" value="${futInput || ''}"><span class="u">万円</span></div>` : ''}</div>
-    <p class="lead">出発点は${{ center: `、今の試算の幅（①、鑑定評価の考え方）の中心 <b>${fmtMan(F.anchor.price)}万円</b>です`, gross: `、①の「表面利回りで」の価格 <b>${fmtMan(F.anchor.price)}万円</b>です。これは<b>売り出し中の物件の平均利回り</b>（健美家・${g.city}・${GROSS.period}）から出した値で、成約（買取の提示など）はこれより低いことが多いです`, input: `、入力した額 <b>${fmtMan(F.anchor.price)}万円</b>です` }[F.anchor.key]}。何年後に何割上下するかは、投資用の売買の考え方（家賃の動き ÷ 築年別の表面利回りの動き）で出し、その割合を出発点に掛けています。5〜20年後に売る場合を3つの前提で試算すると、10年後（築${at(10).age}年）は<b>${fmtMan(Math.min(...r10))}〜${fmtMan(Math.max(...r10))}万円</b>の幅です。</p>
+    <p class="lead">出発点は${{ center: `、今の試算の幅（①、鑑定評価の考え方）の中心 <b>${fmtMan(F.anchor.price)}万円</b>です`, gross: `、①の「表面利回りで」の価格 <b>${fmtMan(F.anchor.price)}万円</b>です。これは<b>売り出し中の物件の平均利回り</b>（健美家・${g.city}・${GROSS.period}）から出した値で、成約（買取の提示など）はこれより低いことが多いです`, input: `、入力した額 <b>${fmtMan(F.anchor.price)}万円</b>です` }[F.anchor.key]}。何年後に何割上下するかは、投資用の売買の考え方（家賃の動き ÷ 築年別の表面利回りの動き）に、この街の地価の過去10年の動きを「相場の動き」として掛けて出し、その割合を出発点に掛けています。5〜20年後に売る場合を3つの前提で試算すると、10年後（築${at(10).age}年）は<b>${fmtMan(Math.min(...r10))}〜${fmtMan(Math.max(...r10))}万円</b>の幅です。</p>
     <div class="table-wrap"><table class="calc-t fut-t"><tr><th>売る時期</th><td>築年</td>${FUTURE.sc.map((c) => `<td>${c.name}</td>`).join('')}</tr>
       <tr><th>今</th><td>築${at(0).age}年</td>${at(0).sc.map((c) => `<td class="num">${fmtMan(c.price)}万円</td>`).join('')}</tr>
       ${FUTURE.years.map((t) => `<tr><th>${t}年後</th><td>築${at(t).age}年</td>${at(t).sc.map((c) => `<td class="num">${fmtMan(c.price)}万円<br><small>今の${fmt(c.ratio * 100)}%・家賃 月${yenF(Math.round(c.rentM / 100) * 100)}・利回り${pctF(c.y, 2)}</small></td>`).join('')}</tr>`).join('')}
     </table></div>
     <div class="chart-box"><h3>売る時期ごとの価格（3つの前提）</h3><svg viewBox="0 0 ${W} ${H}" class="fut-svg" role="img" aria-label="3つの前提の価格の線">${yt}${lines}${ticks}</svg></div>
     <div class="note"><ul>
-      <li>前提（当社の置き方）：${FUTURE.sc.map((c) => `<b>${c.name}</b>＝${c.note}`).join('／')}。築年による家賃の下がり方は、${esc(R.D.name)}の民営借家（非木造）の建築時期別の家賃から計算した年${fmt(F.slope * 100, 2)}%です（同じ時点の、建った時期の違うお部屋どうしの比べで、1つのお部屋の家賃の動きを追ったものではありません）。</li>
-      <li>利回りの変化（強気 −0.5・弱気 ＋1.0ポイント）は10年かけて少しずつ効かせ、10年後以降はその差のままです。築年別の利回りは、健美家の3つの帯（築10年未満／10年〜／20年〜）の値を築5・15・30年の目安に置き、そのあいだを直線でつないだ値です（帯の境目で価格が段差で落ちないように。「築20年〜」の値は築30〜50年の物件も含む平均のため）。タワーマンション・高層階で分けた公表値はないため、同じ値を使っています。利回りの幅は、健美家の大阪市の区分マンションの利回りが直近3年で0.5〜0.8ポイント、10年で約2ポイント動いたことを参考に決め、どの地域にも同じ幅を使っています（東京23区の直近3年の動きは0.4〜0.6ポイントで、大阪市より小さめです）。</li>
+      <li>前提（当社の置き方）：相場の動きは ${futNote(F, R.D, esc(R.muniName))}。年率のもとは、${futLandSrc(F, R.D, esc(R.muniName))}です。相場の動きは10年かけて効かせ、10年後以降はそのままです。地価とマンションの価格は同じ動きではなく、過去のペースが続くとは限りません。3本とも、築年が進むことによる利回りの上がり方と家賃の下がり方は同じです。築年による家賃の下がり方は、${esc(R.D.name)}の民営借家（非木造）の建築時期別の家賃から計算した年${fmt(F.slope * 100, 2)}%です（同じ時点の、建った時期の違うお部屋どうしの比べで、1つのお部屋の家賃の動きを追ったものではありません）。</li>
+      <li>築年別の利回りは、健美家の3つの帯（築10年未満／10年〜／20年〜）の値を築5・15・30年の目安に置き、そのあいだを直線でつないだ値です（帯の境目で価格が段差で落ちないように。「築20年〜」の値は築30〜50年の物件も含む平均のため）。タワーマンション・高層階で分けた公表値はないため、同じ値を使っています。表の「利回り」は、相場の動きを入れたあとの値（家賃×12÷価格）です。</li>
       <li>家賃は${{ now: '今の家賃（共益費込み）', comps: '近くの募集事例からの比準賃料', stat: '統計からの比準賃料' }[g.rentSrc]}（月${yenF(g.rentM)}）から計算しています。仲介手数料・税金・ローン残高は引いていません。</li>
       <li>3つの前提で計算した試算で、将来の価格や家賃をお約束するものではありません。実際の価格は、金利・景気・周辺の供給・建物の管理状態などで、この幅の外になることもあります。</li>
     </ul></div>
@@ -1461,7 +1496,7 @@ function futTableBlock(R) {
     <div class="note"><ul>
       ${past.length > 1 ? `<li>これまでの線は、${esc(R.muniName)}の公示地価（${useName}）の各年の平均です（年によって地点が入れ替わるため、過去10年の数字とは少しずれます）。${thing}の過去の値段ではありません。</li>` : ''}
       <li>これからの線は「グラフで見る」と同じ3つの前提（強気・中立・弱気）で計算した試算で、出発点（${fmtMan(now)}万円）・前提の中身も同じです。仲介手数料・税金・ローン残高は引いていません。</li>
-      ${avg10 != null ? `<li>周辺の平均は、${esc(D.name)}内の市区町村（公示地価・${useName}のある${others.length}市区町村）の単純平均です。これからの試算には地域ごとの差を入れていないため、周辺との比べは出していません。</li>` : ''}
+      ${avg10 != null ? `<li>周辺の平均は、${esc(D.name)}内の市区町村（公示地価・${useName}のある${others.length}市区町村）の単純平均です。これからの試算の相場の動きも、この街の地価の過去10年から置いています。</li>` : ''}
       <li>将来の価格や家賃をお約束するものではありません。実際の価格は、金利・景気・周辺の供給・建物の管理状態などで、この幅の外になることもあります。売る時期は、個別の事情とあわせてご判断ください。</li>
     </ul></div>
   </div>`;
@@ -1692,6 +1727,7 @@ function renderRent(R, delay) {
     ['築年の差', '×' + fmt(stat.ageF, 2), stat.ageRow ? `${stat.ageKey.endsWith('000') ? esc(R.D.name) : nm(stat.ageKey)}の民営借家（${stat.wood ? '木造' : '非木造'}）で、${stat.ageRow[0] ? stat.ageRow[0] + '〜' : ''}${stat.ageRow[1]}年築の家賃 ÷ ${stat.wood ? '木造' : '非木造'}の平均` : '該当なし'],
     ['共益費込みに換算', '×' + fmt(stat.kyoei, 3), stat.house ? '一戸建てのため共益費はないものとして換算しません' : stat.st ? `${stat.ageKey.endsWith('000') ? esc(R.D.name) : nm(stat.ageKey)}の民営借家（木造）の、共益費込みの家賃 ÷ 共益費を除いた家賃` : `${stat.ageKey.endsWith('000') ? esc(R.D.name) : nm(stat.ageKey)}の民営借家（${stat.wood ? '木造' : '非木造'}）の、共益費込みの家賃 ÷ 共益費を除いた家賃`],
     ...(stat.towerK && stat.towerK !== 1 ? [['タワーマンション', '×' + fmt(stat.towerK, 2), `総階数20階以上・40㎡以上のため掛けています。家賃の統計には階数がないため、当社が賃貸の成約（2026年）で、この計算の家賃に対する成約の家賃（共益費込み）の比を、建物名でタワーとそれ以外に分けて比べた値です（大阪市の6区でタワー177件・1.26倍）。${{ 28: '兵庫県は神戸市中央区・東灘区の成約（タワー13件）で、40㎡以上ではこれ以上あることを確かめ、同じ値を使っています。', 23: '愛知県は名古屋市中区・千種区の成約（タワー21件）で、40㎡以上ではこれ以上あることを確かめ、同じ値を使っています。', 14: '神奈川県は横浜市西区・川崎市中原区の成約（タワー25件）で、40㎡以上ではこれ以上あることを確かめ、同じ値を使っています。' }[R.D.code] || ''}`]] : []),
+    ...(stat.knK && stat.knK !== 1 ? [['共同住宅・非木造の補正', '×' + fmt(stat.knK, 3), `民営借家の㎡家賃には一戸建て・木造の貸家も入っているため、同じ調査の建て方・構造別の表（第122-5表）から、${stat.from && stat.from !== 'pref' ? esc(R.D.muniNames[stat.from] || '') : esc(R.muniName)}の民営の共同住宅・非木造の水準を当社が推計し、その比を掛けています（推計に使える戸数が1,000戸以上の市区町村だけ。0.90〜1.15倍まで）`]] : []),
     ['統計からの家賃', yenF(r100(stat.monthly)), `× ${v.kind === 'house' ? '延床面積' : '専有面積'}${fmt(v.area, 1)}㎡（広さによる差は補正していません）`, 'tot'],
   ]);
   const compRows = !comps ? '' : '<div class="comp-wrap"><table class="calc-t comp-t"><tr><th>事例</th><td>家賃＋共益費</td><td>㎡単価</td><td>築年の補正</td><td>駅距離の補正</td><td>広さの補正</td><td>補正後</td></tr>' +
