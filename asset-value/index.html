@@ -246,6 +246,9 @@ form.inputs { padding: 18px; position: sticky; top: 76px; max-height: calc(100vh
 #secFuture[data-view="graph"] .fv-table, #secFuture[data-view="table"] .fv-graph { display: none; }
 .fut-tsubo tr.now th, .fut-tsubo tr.now td { color: var(--accent); font-weight: 700; border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); }
 .fa-svg { width: 100%; height: auto; display: block; }
+.land-fut { margin: 18px 0 6px; padding-top: 14px; border-top: 1px solid var(--grid); }
+.land-fut .lf-h { margin: 0 0 6px; font-size: 16px; }
+.land-fut .cards { margin: 10px 0; }
 .fa-svg .fa-a { fill: var(--text-3); font-size: 11px; }
 .fa-svg .fa-l { fill: var(--text); font-size: 12px; }
 .fa-svg .fa-now { stroke: var(--text-3); stroke-dasharray: 3 4; }
@@ -389,9 +392,29 @@ details.calc.wide { margin-top: 12px; }
 footer.src { max-width: 1280px; margin: 0 auto; padding: 0 24px 40px; font-size: 11.5px; color: var(--text-3); line-height: 1.8; }
 @media (max-width: 960px) { footer.src { padding: 0 16px 32px; } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.pdf-head { display: none; }
+@page { size: A4; margin: 12mm 11mm; }
 @media print {
-  header.top .tools, form.inputs .form-actions { display: none; }
-  body { background: #fff; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { background: #fff !important; }
+  body::before, body::after { display: none !important; }
+  header.top { position: static; backdrop-filter: none; box-shadow: none; border: 0; padding: 0 0 6px; }
+  header.top .tools, form.inputs, .rtabs, .seg, .fut-view, .fut-anchor, #btnUseRefY, .sum-basis, .holo-more > summary, #ptBox button { display: none !important; }
+  main { display: block; max-width: none; padding: 0; }
+  .panel { box-shadow: none !important; background: #fff !important; border: 1px solid #d5dbe3 !important; }
+  .sec { margin: 0 0 10px; }
+  #sec1 { break-before: page; } /* 1ページ目は概要だけ。ほかは続けて流す */
+  .sec-head, h3 { break-after: avoid; }
+  .table-wrap { overflow: visible !important; }
+  .calc-t { font-size: 11px; width: 100%; }
+  .fut-t th, .fut-t td { white-space: nowrap; }
+  .fut-t small { display: block; white-space: normal; }
+  .chart-box, .land-fut .cards, .sum-tile, .sum-outlook, .fa-card, .fa-eval, .sum-duo, .sum-trend, .sum-map, table, tr, .note li, .fut-word { break-inside: avoid; }
+  .reveal { opacity: 1 !important; transform: none !important; }
+  #secFuture .fv-graph, #secFuture .fv-table { display: block !important; }
+  .pdf-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 11px; color: #555; border-bottom: 1px solid #d5dbe3; padding: 0 0 6px; margin: 0 0 8px; }
+  footer.src { padding: 8px 0 0; break-before: avoid; }
+  .holo-anim * { animation: none !important; }
 }
 </style>
 </head>
@@ -401,6 +424,7 @@ footer.src { max-width: 1280px; margin: 0 auto; padding: 0 24px 40px; font-size:
   <div class="tools">
     <button type="button" id="btnTheme" aria-label="見た目を切り替え">明るい表示</button>
     <button type="button" id="btnMotion" aria-pressed="true">演出あり</button>
+    <button type="button" id="btnPdf" title="印刷の画面が開きます。送信先を「PDFに保存」にして保存してください">PDFで保存</button>
     <button type="button" id="btnExport">書き出し</button>
     <button type="button" id="btnImport">読み込み</button>
     <input type="file" id="fileImport" accept=".json,application/json" hidden>
@@ -579,6 +603,23 @@ function landRate(D, muni) {
   if (!xs.length) return { src: 'none', use: 'r', y10: 0, raw: 0 };
   const y10 = xs.reduce((a, b) => a + b, 0) / xs.length;
   return { src: 'pref', use: 'r', y10, n: xs.length, raw: Math.pow(1 + y10, 0.1) - 1 };
+}
+// 地価の10年後の見通し（地価タブ）。用途は地価タブで選んでいるもの。前提の決め方は将来タブと同じ
+function landFuture(D, muni, use) {
+  const Lm = D.land.munis[muni] && D.land.munis[muni][use];
+  if (!Lm || !(Lm.avg > 0)) return null;
+  let L;
+  if (Lm.y10 != null) L = { src: 'muni', y10: Lm.y10 };
+  else {
+    const xs = Object.values(D.land.munis).map((m) => m[use] && m[use].y10).filter((x) => x != null);
+    L = xs.length ? { src: 'pref', y10: xs.reduce((a, b) => a + b, 0) / xs.length, n: xs.length } : { src: 'none', y10: 0 };
+  }
+  L.raw = Math.pow(1 + L.y10, 0.1) - 1;
+  const g = Math.max(-FUTURE.gMax, Math.min(FUTURE.gMax, L.raw));
+  const gs = [g, g / 2, 0].sort((a, b) => b - a); // 強気・中立・弱気
+  const rows = [];
+  for (let t = 0; t <= 10; t++) rows.push({ t, sc: gs.map((gm) => ({ gm, price: Lm.avg * Math.pow(1 + gm, t), ratio: Math.pow(1 + gm, t) })) });
+  return { use, now: Lm.avg, land: L, g, gs, rows };
 }
 function futureValues(R, anchor) {
   const g = R.gross; if (!g) return null;
@@ -1836,6 +1877,7 @@ function fillTown(R, delay, animate = true) {
       </div>
       <div class="chart-box" id="rankBox"><h3>${U}内の順位（前年比・${useName}）</h3></div>
     </div>
+    ${landFutBlock(R, useName)}
     <div class="note"><ul>
       <li>地価は、①の原価法（積算価格・参考）の土地にだけ使っています。比準価格・収益価格には使っていません。</li>
       <li>前年比は、両方の年に調べている地点の変動率を平均したものです（国土交通省の「平均変動率」と同じ考え方）。10年前比は、10年前と今年の両方を調べている地点だけで当社が計算した値で、国土交通省の公表値ではありません。順位は、3地点以上ある市区町村だけで付けています。長い流れは、毎年の平均変動率をつないで、2026年の平均の地価に合わせたものです。</li>
@@ -1853,6 +1895,54 @@ function fillTown(R, delay, animate = true) {
   buildRank(R);
   buildMap(R, delay);
   motion = prev;
+}
+function landFutBlock(R, useName) {
+  const D = R.D, LF = landFuture(D, R.v.muni, landUse);
+  if (!LF) return '';
+  const who = esc(R.muniName), Y0 = D.land.years[0], Y1 = D.land.years[1];
+  const Lm = D.land.munis[R.v.muni][landUse];
+  const man = (p) => fmt(p / 10000, p < 100000 ? 1 : 0); // 円/㎡ → 万円/㎡
+  const past = [];
+  if (Lm.trend && Lm.trend[Y1 - Y0] > 0) for (let y = Math.max(Y0, Y1 - 20); y <= Y1; y++) { const p = Lm.trend[y - Y0]; if (p > 0) past.push([y, p / Lm.trend[Y1 - Y0] * LF.now]); }
+  const fut = [0, 1, 2].map((i) => LF.rows.map((r) => [Y1 + r.t, r.sc[i].price]));
+  const r10 = LF.rows[10].sc, dd = (x) => Math.abs(x - 1) < 1e-9 ? "±0%" : pct(x - 1);
+  // グラフ（将来タブの「街の動きと評価」と同じ作り。縦軸は万円/㎡）
+  const W = 640, H = 260, Lf = 48, Rr = 92, T = 16, B = 30;
+  const allV = [...past.map((p) => p[1]), ...fut.flat().map((p) => p[1])];
+  const lo = Math.min(...allV), hi = Math.max(...allV), pad = (hi - lo) * 0.08 || hi * 0.05;
+  const mn = Math.max(0, lo - pad), mx = hi + pad;
+  const x0 = past.length ? past[0][0] : Y1, x1 = Y1 + 10;
+  const xx = (y) => Lf + (W - Lf - Rr) * (y - x0) / (x1 - x0), yy = (p) => T + (H - T - B) * (1 - (p - mn) / (mx - mn || 1));
+  const path = (a) => a.map((p, i) => (i ? 'L' : 'M') + xx(p[0]).toFixed(1) + ' ' + yy(p[1]).toFixed(1)).join(' ');
+  const grid = [0, 1, 2, 3, 4].map((i) => mn + (mx - mn) * i / 4).map((p) => `<line x1="${Lf}" x2="${W - Rr}" y1="${yy(p).toFixed(1)}" y2="${yy(p).toFixed(1)}" stroke="var(--grid)"/><text x="${Lf - 6}" y="${(yy(p) + 4).toFixed(1)}" text-anchor="end" class="fa-a">${man(p)}</text>`).join('');
+  const xt = []; for (let y = Math.ceil(x0 / 5) * 5; y <= x1; y += 5) xt.push(`<text x="${xx(y).toFixed(1)}" y="${H - 10}" text-anchor="middle" class="fa-a">${y}</text>`);
+  const cls = ['fa-bull', 'fa-base', 'fa-bear'];
+  const ends = fut.map((a, i) => [i, yy(a[10][1])]).sort((a, b) => a[1] - b[1]);
+  for (let i = 1; i < ends.length; i++) if (ends[i][1] - ends[i - 1][1] < 13) ends[i][1] = ends[i - 1][1] + 13;
+  const svg = `<svg viewBox="0 0 ${W} ${H}" class="fa-svg" role="img" aria-label="${who}の${useName}の平均の地価のこれまでと、3つの前提の10年後の試算">${grid}${xt.join('')}
+    <line class="fa-now" x1="${xx(Y1).toFixed(1)}" x2="${xx(Y1).toFixed(1)}" y1="${T}" y2="${H - B}"/><text x="${xx(Y1).toFixed(1)}" y="${T - 4}" text-anchor="middle" class="fa-a">今（${Y1}年）</text>
+    ${past.length > 1 ? `<path class="fa-past" d="${path(past)}"/>` : ''}
+    ${fut.map((a, i) => `<path class="fa-sc ${cls[i]}" d="${path(a)}"/>`).join('')}
+    ${ends.map(([i, y]) => `<text x="${W - Rr + 6}" y="${(y + 4).toFixed(1)}" class="fa-l">${FUTURE.sc[i].name} ${man(fut[i][10][1])}</text>`).join('')}</svg>`;
+  const r = (x) => (x >= 0 ? '年+' : '年−') + fmt(Math.abs(x * 100), 1) + '%';
+  const what = (x) => x === 0 ? '地価は横ばい' : Math.abs(x - LF.g) < 1e-12 ? `過去10年のペースが続く（${r(x)}）` : `過去10年の半分のペース（${r(x)}）`;
+  const L = LF.land;
+  const capped = Math.abs(L.raw) > FUTURE.gMax ? `（実際は年${pct(L.raw)}ですが、当社の置き方で±${FUTURE.gMax * 100}%までにしています）` : '';
+  const src = L.src === 'muni' ? `${who}の公示地価（${useName}）の過去10年 ${pct(L.y10)}＝年${pct(LF.g)}${capped}`
+    : L.src === 'pref' ? `${who}に過去10年の${useName}の値がないため、${esc(D.name)}内の市区町村（${useName}、${L.n}市区町村）の過去10年の平均 ${pct(L.y10)}＝年${pct(LF.g)}${capped}`
+    : '公示地価の過去10年の値がないため、地価の動きは0';
+  const card = (i) => `<div class="card"><div class="k">${FUTURE.sc[i].name}（${Y1 + 10}年）</div><div class="v num ${r10[i].ratio >= 1 ? 'up' : 'down'}">${man(r10[i].price)}<small>万円/㎡</small></div><div class="s num">今より ${dd(r10[i].ratio)} ・ 坪 ${fmt(Math.round(r10[i].price * TSUBO / 1e4))}万円</div></div>`;
+  return `<div class="land-fut" id="landFut">
+    <h3 class="lf-h">10年後の見通し（試算・${useName}）</h3>
+    <p class="lead">${who}の${useName}の平均の地価（今 <b>${man(LF.now)}万円/㎡</b>）は、10年後に中立の前提で <b>${man(r10[1].price)}万円/㎡</b>（今より ${dd(r10[1].ratio)}）の試算です。強気の前提では <b>${dd(r10[0].ratio)}</b>、弱気の前提では <b>${dd(r10[2].ratio)}</b> です。</p>
+    <div class="cards">${card(0)}${card(1)}${card(2)}</div>
+    <div class="chart-box"><h3>${past.length > 1 ? `これまで（${past[0][0]}年〜）と、` : ''}これから10年（平均の地価・万円/㎡）</h3>${svg}</div>
+    <div class="note"><ul>
+      <li>3つの前提：${FUTURE.sc.map((c, i) => `<b>${c.name}</b>＝${what(LF.gs[i])}`).join('／')}。年率のもとは、${src}。決め方は「将来」タブと同じです。</li>
+      <li>${who}の公示地点の平均の地価に、年率を掛けた試算です。この物件の土地の値段そのものではありません。地価は建物と違って古くならないため、築年の影響は入れていません。</li>
+      <li>将来の地価をお約束するものではありません。実際の地価は、金利・景気・まちづくり・人口の動きなどで、この幅の外になることもあります。</li>
+    </ul></div>
+  </div>`;
 }
 function buildRank(R) {
   const all = Object.entries(R.D.land.munis).filter(([, m]) => m[landUse] && m[landUse].rank).sort((a, b) => a[1][landUse].rank - b[1][landUse].rank);
@@ -2549,6 +2639,29 @@ function applyTheme() {
 $('#btnTheme').addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; store.set('avd_theme', theme); applyTheme(); });
 function applyMotion() { const b = $('#btnMotion'); b.setAttribute('aria-pressed', motion); b.textContent = motion ? '演出あり' : '演出なし'; }
 $('#btnMotion').addEventListener('click', () => { motion = !motion; store.set('avd_motion', motion ? 'on' : 'off'); applyMotion(); const h = $('#secHolo'); if (h) h.classList.toggle('holo-anim', motion); });
+
+// ---- PDFで保存（2026-11-16）：全部のタブを明るい表示で並べ、印刷の画面を開く。閉じたら元に戻す ----
+let pdfBusy = false;
+$('#btnPdf').addEventListener('click', async () => {
+  if (pdfBusy) return;
+  if (!shown || !lastResult) { alert('先に「試算する」で結果を出してから押してください。'); return; }
+  pdfBusy = true;
+  const keep = { motion, title: document.title };
+  const restore = () => { window.AVD_ALLTABS = false; motion = keep.motion; applyTheme(); document.title = keep.title; pdfBusy = false; const y = scrollY; run(false).then(() => scrollTo(0, y)); };
+  try {
+    window.AVD_ALLTABS = true; motion = false;
+    document.documentElement.setAttribute('data-theme', 'light');
+    await run(false);
+    document.querySelectorAll('#results details').forEach((d) => { d.open = true; });
+    const R = lastResult, d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+    const ymd = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
+    $('#results').insertAdjacentHTML('afterbegin', `<div class="pdf-head"><span>${esc(R.muniName)}・${R.v.kind === 'house' ? '戸建て' : 'マンション'}・${fmt(R.v.area, 1)}㎡・${R.v.built}年築</span><span>作成日 ${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日／公開データからの試算で、鑑定評価・査定ではありません</span></div>`);
+    document.title = `資産価値_${R.muniName}_${ymd}`;
+    await new Promise((r) => setTimeout(r, 500)); // 地図の輪郭などの読み込みを待つ
+    addEventListener('afterprint', restore, { once: true });
+    window.print();
+  } catch (err) { restore(); alert('PDFの準備でエラーが出ました。もう一度お試しください。'); }
+});
 
 // ---- 書き出し・読み込み（1人1ファイル。保存先の目安：OKF\clients\<お客様>\） ----
 $('#btnExport').addEventListener('click', async () => {
