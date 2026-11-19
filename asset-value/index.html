@@ -407,6 +407,11 @@ html.pdf-cap .holo-anim * { animation: none !important; }
 .pdf-ready span { flex: 1 1 180px; font-size: 14px; }
 .pdf-ready button { font-size: 15px; padding: 10px 16px; border-radius: 10px; }
 .pdf-ready .go { background: var(--accent); color: #fff; border: 0; font-weight: 700; }
+.pdf-pv { position: fixed; inset: 0; z-index: 49; background: rgba(20, 24, 32, .88); overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 16px 150px; }
+.pdf-pv-pages { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.pdf-pv-page { position: relative; width: min(100%, 640px); aspect-ratio: 210 / 297; background: #fff; box-shadow: 0 4px 18px rgba(0,0,0,.4); }
+.pdf-pv-page img { position: absolute; display: block; }
+.pdf-pv-no { position: absolute; right: 8px; bottom: 6px; font-size: 11px; color: #888; }
 @media print {
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { background: #fff !important; }
@@ -3095,9 +3100,9 @@ $('#btnPdf').addEventListener('click', async () => {
     await new Promise((r) => setTimeout(r, 500)); // 地図の輪郭などの読み込みを待つ
     if (direct) {
       const name = document.title + '.pdf';
-      const blob = await pdfDirectMake();
+      const made = await pdfDirectMake();
       restore();
-      pdfOffer(blob, name);
+      pdfOffer(made, name);
       return;
     }
     addEventListener('afterprint', restore, { once: true });
@@ -3109,7 +3114,23 @@ $('#btnPdf').addEventListener('click', async () => {
 
 // スマホ：PDFをその場で作る（印刷の画面を使わない）。部品（html2canvas・jsPDF）は公開版にだけ入っている
 // ページの切れ目を、グラフや文字の途中でなく「何もない行」に寄せる（下から、ページの高さの4割までさかのぼって探す）
+let pdfRects = []; // 写したブロックの中の「途中で切らない部品」の上下（キャンバスの px）
+const PDF_KEEP = '.land-fut, .chart-box, .card, .cards, .fa-card, .kijun, .sum-tile, .sum-outlook, .sum-duo > *, .split > *, tr, li, p, h2, h3, .sec-head, .lead, svg, img, .calc-t, details > summary, .pdf-head';
 function pdfCut(c, top, room) {
+  const lim = top + room, min = top + room * 0.35;
+  const inside = (y) => pdfRects.some(([a, b]) => a < y - 1 && y + 1 < b);
+  // 部品の下の端（＋少し）を候補に、下から順に試す。部品の途中にかかる候補は使わない
+  const cands = [...new Set(pdfRects.map(([, b]) => Math.ceil(b) + 2))].filter((y) => y > min && y <= lim).sort((a, b) => b - a);
+  for (const y of cands) if (!inside(y)) return y - top;
+  return pdfCutPx(c, top, room);
+}
+// その範囲の各行が、左右の端を除いて一色か（文字・絵がなく、あるのは余白と枠の下線だけ）
+function pdfBlank(c, top, h) {
+  const x0 = Math.floor(c.width * 0.04), w = c.width - x0 * 2, d = c.getContext('2d').getImageData(x0, top, w, h).data;
+  for (let r = 0; r < h; r++) { const i0 = r * w * 4; for (let i = i0 + 4; i < i0 + w * 4; i += 4) if (Math.abs(d[i] - d[i0]) + Math.abs(d[i + 1] - d[i0 + 1]) + Math.abs(d[i + 2] - d[i0 + 2]) > 30) return false; }
+  return true;
+}
+function pdfCutPx(c, top, room) {
   const look = Math.floor(room * 0.4), y0 = top + room - look, x0 = Math.floor(c.width * 0.04), w = c.width - x0 * 2;
   const d = c.getContext('2d').getImageData(x0, y0, w, look).data;
   const quiet = (r) => { const i0 = r * w * 4; for (let i = i0 + 4; i < i0 + w * 4; i += 4) if (Math.abs(d[i] - d[i0]) + Math.abs(d[i + 1] - d[i0 + 1]) + Math.abs(d[i + 2] - d[i0 + 2]) > 24) return false; return true; };
@@ -3122,7 +3143,7 @@ function pdfWait(on) {
   const b = $('#btnPdf'); if (!b.dataset.label) b.dataset.label = b.textContent;
   b.textContent = on ? 'PDFを作成中…' : b.dataset.label; b.disabled = on;
   const w = $('#pdfWaitMsg'); if (w) w.remove();
-  if (on) { const m = el('div', { class: 'pdf-ready', id: 'pdfWaitMsg', role: 'status' }); m.innerHTML = '<span>PDFを作成しています。30秒〜1分ほどお待ちください（画面が一時的に切り替わります）。</span>'; document.body.appendChild(m); }
+  if (on) { const m = el('div', { class: 'pdf-ready', id: 'pdfWaitMsg', role: 'status' }); m.innerHTML = '<span>PDFを作成しています。1分ほどお待ちください（画面が一時的に切り替わります）。</span>'; document.body.appendChild(m); }
 }
 function pdfDirectOk() {
   if (!(window.jspdf && window.jspdf.jsPDF && window.html2canvas)) return false;
@@ -3136,33 +3157,39 @@ async function pdfDirectMake() {
   // 並べる順：見出しの1行・概要 → （改ページ）→ 価格・家賃・地価・収支・将来 → 出どころ
   const blocks = [...res.children].filter((n) => !n.classList.contains('rtabs') && n.offsetHeight > 0);
   const foot = document.querySelector('footer.src'); if (foot && foot.offsetHeight > 0) blocks.push(foot);
-  let y = M, first = true;
-  for (const b of blocks) {
-    if (b.id === 'sec1' && y > M) { doc.addPage(); y = M; }
+  let y = M, pg = 0;
+  const pages = [[]], put = (url, yy, hh) => { doc.addImage(url, 'JPEG', M, yy, CW, hh); pages[pg].push({ url, y: yy, h: hh }); };
+  const newPage = () => { doc.addPage(); y = M; pg++; pages.push([]); };
+  for (const [i, b] of blocks.entries()) {
+    if (i >= 2 && y > M + 20) newPage(); // 見出しの1行・概要のあとは、章（①〜⑤）ごとに新しいページから
     const c = await window.html2canvas(b, { scale: 1.6, backgroundColor: '#ffffff', useCORS: true, logging: false, windowWidth: 720, onclone: pdfFixClone });
     const mmPerPx = CW / c.width, hmm = c.height * mmPerPx;
     if (hmm <= CH) {
-      if (y + hmm > M + CH && y > M) { doc.addPage(); y = M; }
-      doc.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', M, y, CW, hmm); y += hmm + 3;
+      if (y + hmm > M + CH && y > M) newPage();
+      put(c.toDataURL('image/jpeg', 0.9), y, hmm); y += hmm + 3;
     } else {
-      // 1ページに入らない長さは、今のページの残り（少なければ次のページ）から、ページの高さで切って続ける
-      if (M + CH - y < 40) { doc.addPage(); y = M; }
+      // 1ページに入らない長さは、今のページの残り（少なければ次のページ）から、部品の境目で切って続ける
+      if (M + CH - y < 40) newPage();
       for (let top = 0; top < c.height;) {
+        // 残りが枠の下端・余白だけ（中身のない細い切れ端）なら、次のページに載せない（③などの章の頭がずれる原因だった）
+        if (top > 0 && c.height - top < 80 && pdfBlank(c, top, c.height - top)) break;
         const room = Math.floor((M + CH - y) / mmPerPx);
         const h = c.height - top <= room ? c.height - top : pdfCut(c, top, room), part = document.createElement('canvas');
         part.width = c.width; part.height = h;
         part.getContext('2d').drawImage(c, 0, top, c.width, h, 0, 0, c.width, h);
-        doc.addImage(part.toDataURL('image/jpeg', 0.9), 'JPEG', M, y, CW, h * mmPerPx); y += h * mmPerPx + 3; top += h;
-        if (top < c.height) { doc.addPage(); y = M; }
+        put(part.toDataURL('image/jpeg', 0.9), y, h * mmPerPx); y += h * mmPerPx + 3; top += h;
+        if (top < c.height && !(c.height - top < 80 && pdfBlank(c, top, c.height - top))) newPage();
       }
     }
-    first = false;
   }
-  return doc.output('blob');
+  return { blob: doc.output('blob'), pages, PW, PH, M, CW };
 }
 // html2canvas は color-mix() の色（計算後は color(srgb …)）を読めず止まる。また SVG はクラスの見た目（線の色・塗りなし）が落ちる。
 // 写す直前のコピーで、色を rgba に直し、SVG の見た目を要素に直接書く
 function pdfFixClone(doc, root) {
+  const r0 = root.getBoundingClientRect(), sc = 1.6;
+  pdfRects = [...root.querySelectorAll(PDF_KEEP)].map((n) => n.getBoundingClientRect()).filter((r) => r.height > 0 && r.height < 900)
+    .map((r) => [(r.top - r0.top) * sc, (r.bottom - r0.top) * sc]);
   const W = doc.defaultView, rgb = (v) => v.replace(/color\(srgb ([-\d.e]+) ([-\d.e]+) ([-\d.e]+)(?: \/ ([-\d.e]+))?\)/g, (m, r, g, b, a) => `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a == null ? 1 : a})`);
   const P = ['color', 'background-color', 'background-image', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'outline-color', 'box-shadow', 'text-decoration-color', 'fill', 'stroke', 'stop-color'];
   const SV = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-size', 'font-weight', 'font-family', 'text-anchor', 'dominant-baseline', 'paint-order'];
@@ -3173,21 +3200,35 @@ function pdfFixClone(doc, root) {
   }
 }
 // できたPDFを渡す：押した直後でないと共有・保存ができない端末があるため、ボタンを出して押してもらう
-function pdfOffer(blob, name) {
+function pdfOffer(made, name) {
+  const blob = made.blob;
   const box = el('div', { class: 'pdf-ready', id: 'pdfReady', role: 'dialog', 'aria-label': 'PDFができました' });
-  box.innerHTML = `<span>PDFができました（${esc(name)}）</span><button type="button" class="go">保存・共有する</button><button type="button" class="no">閉じる</button>`;
+  box.innerHTML = `<span>PDFができました（${made.pages.length}ページ）</span><button type="button" class="pv">プレビュー</button><button type="button" class="go">保存・共有する</button><button type="button" class="no">閉じる</button>`;
   document.body.appendChild(box);
-  box.querySelector('.no').addEventListener('click', () => box.remove());
+  const close = () => { box.remove(); const v = $('#pdfPreview'); if (v) v.remove(); document.documentElement.style.overflow = ''; };
+  box.querySelector('.no').addEventListener('click', close);
+  box.querySelector('.pv').addEventListener('click', () => pdfPreview(made, box));
   box.querySelector('.go').addEventListener('click', async () => {
     const file = new File([blob], name, { type: 'application/pdf' });
     try {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); box.remove(); return; }
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); close(); return; }
     } catch (e) { if (e && e.name === 'AbortError') return; }
     const u = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(u), 60000);
-    box.remove();
+    close();
   });
+}
+// プレビュー：できたページを画面の上に並べて見せる（どの端末でも同じに見える。PDFの中身と同じ絵を同じ位置に置く）
+function pdfPreview(made, box) {
+  const btn = box.querySelector('.pv'), old = $('#pdfPreview');
+  if (old) { old.remove(); document.documentElement.style.overflow = ''; btn.textContent = 'プレビュー'; return; }
+  const { pages, PW, PH, M, CW } = made, pc = (x, of) => (x / of * 100).toFixed(3) + '%';
+  const v = el('div', { class: 'pdf-pv', id: 'pdfPreview', role: 'dialog', 'aria-label': 'PDFのプレビュー' });
+  v.innerHTML = '<div class="pdf-pv-pages">' + pages.map((p, i) => '<div class="pdf-pv-page">' + p.map((im) => '<img alt="" src="' + im.url + '" style="left:' + pc(M, PW) + ';top:' + pc(im.y, PH) + ';width:' + pc(CW, PW) + ';height:' + pc(im.h, PH) + '">').join('') + '<span class="pdf-pv-no">' + (i + 1) + ' / ' + pages.length + '</span></div>').join('') + '</div>';
+  document.body.appendChild(v);
+  document.documentElement.style.overflow = 'hidden';
+  btn.textContent = 'プレビューを閉じる';
 }
 
 // ---- 書き出し・読み込み（1人1ファイル。保存先の目安：OKF\clients\<お客様>\） ----

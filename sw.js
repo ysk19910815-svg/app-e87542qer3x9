@@ -1,5 +1,5 @@
 // オフライン用（ネット優先：つながれば常に最新、つながらないときだけ前回保存した分を出す）
-const C = "apps-1795054715863", B = "/app-e87542qer3x9/";
+const C = "apps-1795081109100", B = "/app-e87542qer3x9/";
 const PRE = ["", "takehome/", "cashflow/", "asset-value/", "asset-value/data/index.js", "manifest.webmanifest", "icons/icon-192.png"].map((p) => B + p);
 self.addEventListener("install", (e) => { self.skipWaiting(); e.waitUntil(caches.open(C).then((c) => c.addAll(PRE)).catch(() => {})); });
 self.addEventListener("activate", (e) => e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== C).map((k) => caches.delete(k)))).then(() => self.clients.claim())));
